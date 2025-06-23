@@ -53,7 +53,7 @@ class RemoteRegister extends Command
         // 查询最近2分钟内新增且未注册过的用户
         return Db::name('common_user')
             ->alias('u')
-            ->leftJoin('ntp_remote_register_log r', 'u.id = r.local_user_id')
+            ->leftJoin('remote_register_log r', 'u.id = r.local_user_id')
             ->where('u.create_time', '>=', $twoMinutesAgo)
             ->where('r.id', 'null')
             ->field('u.id, u.user_name, u.tg_first_name, u.tg_last_name, u.create_time')
@@ -106,7 +106,7 @@ class RemoteRegister extends Command
         
         // 如果用户名过长，截取前10位
         if (strlen($baseAccount) > 10) {
-            $baseAccount = substr($baseAccount, 0, 10);
+            // $baseAccount = substr($baseAccount, 0, 10);
         }
         
         return $baseAccount;
@@ -246,6 +246,6 @@ class RemoteRegister extends Command
             'retry_count' => 0
         ];
 
-        Db::name('ntp_remote_register_log')->insert($data);
+        Db::name('remote_register_log')->insert($data);
     }
 }
