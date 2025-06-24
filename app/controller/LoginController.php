@@ -31,7 +31,7 @@ class LoginController extends BaseController
         $this->inviteCodeService = new InviteCodeService();
     }
 
-    /**
+/**
      * 主入口方法 - 处理用户访问 /login?user_id=1
      * 自动登录并重定向到免登录地址
      * @return Response
@@ -62,15 +62,37 @@ class LoginController extends BaseController
             $totalTime = round((microtime(true) - $startTime) * 1000, 2);
             
             if ($result['success']) {
-                Log::info('主登录流程成功，准备重定向', [
+                Log::info('主登录流程成功，准备JavaScript重定向', [
                     'request_id' => $requestId,
                     'user_id' => $userId,
                     'auto_login_url' => $result['auto_login_url'],
                     'total_time' => $totalTime . 'ms'
                 ]);
                 
-                // 登录成功，重定向到免登录地址
-                return redirect($result['auto_login_url']);
+                // 不用 redirect()，改用 JavaScript 重定向
+                $autoLoginUrl = $result['auto_login_url'];
+                
+                $html = "<!DOCTYPE html>
+<html>
+<head>
+    <meta charset='utf-8'>
+    <title>登录跳转中...</title>
+    <meta name='viewport' content='width=device-width, initial-scale=1'>
+</head>
+<body>
+    <div style='text-align:center; padding:50px; font-family: Arial;'>
+        <h3>🔄 登录成功，正在跳转...</h3>
+        <p>如果没有自动跳转，请<a href='{$autoLoginUrl}'>点击这里</a></p>
+    </div>
+    <script>
+        window.location.href = '{$autoLoginUrl}';
+    </script>
+</body>
+</html>";
+                
+                return response($html)->header([
+                    'Content-Type' => 'text/html; charset=utf-8'
+                ]);
             } else {
                 Log::error('主登录流程失败', [
                     'request_id' => $requestId,
