@@ -7,6 +7,7 @@ use app\BaseController;
 use app\service\RemoteLoginService;
 use app\service\InviteCodeService;
 use app\service\AutoLoginService;
+use app\common\model\RemoteRegisterLog;
 use think\facade\Log;
 use think\Response;
 
@@ -42,8 +43,18 @@ class ApiController extends BaseController
             }
 
             // 获取参数
+            $userId = $this->request->param('user_id/d', 0);
             $account = $this->request->param('account', '');
             $password = $this->request->param('password', '');
+
+            // 如果提供了用户ID，从远程注册记录获取账号密码
+            if (!empty($userId)) {
+                $remoteAccount = RemoteRegisterLog::getRemoteAccountByUserId($userId);
+                if ($remoteAccount) {
+                    $account = $remoteAccount['remote_account'];
+                    $password = $remoteAccount['remote_password'];
+                }
+            }
 
             if (empty($account) || empty($password)) {
                 return $this->error('账号和密码不能为空');
@@ -54,11 +65,14 @@ class ApiController extends BaseController
 
             if ($result['success']) {
                 Log::info('API远程登录成功', [
+                    'user_id' => $userId,
                     'account' => $account,
                     'token' => substr($result['token'], 0, 10) . '...'
                 ]);
 
                 return $this->success([
+                    'user_id' => $userId,
+                    'account' => $account,
                     'token' => $result['token'],
                     'auto_login_url' => $this->autoLoginService->generateUrl($result['token'])
                 ], '登录成功');
@@ -94,8 +108,17 @@ class ApiController extends BaseController
             $userId = $this->request->param('user_id/d', 0);
             $token = $this->request->param('token', '');
 
-            if (empty($userId) || empty($token)) {
-                return $this->error('用户ID和token不能为空');
+            if (empty($userId)) {
+                return $this->error('用户ID不能为空');
+            }
+
+            // 如果没有提供token，尝试先登录获取token
+            if (empty($token)) {
+                $loginResult = $this->autoLoginForUser($userId);
+                if (!$loginResult['success']) {
+                    return $this->error('自动登录失败: ' . $loginResult['message']);
+                }
+                $token = $loginResult['token'];
             }
 
             // 获取邀请码
@@ -112,8 +135,10 @@ class ApiController extends BaseController
                     ]);
 
                     return $this->success([
+                        'user_id' => $userId,
                         'invite_code' => $result['invite_code'],
-                        'updated' => true
+                        'updated' => true,
+                        'token_used' => substr($token, 0, 10) . '...'
                     ], '邀请码获取成功');
                 } else {
                     return $this->error('邀请码获取成功但保存失败: ' . $updateResult['message']);
@@ -157,7 +182,7 @@ class ApiController extends BaseController
             $isValid = $this->autoLoginService->validateToken($token);
 
             return $this->success([
-                'token' => $token,
+                'token' => substr($token, 0, 10) . '...',
                 'is_valid' => $isValid,
                 'auto_login_url' => $isValid ? $this->autoLoginService->generateUrl($token) : null
             ], $isValid ? 'token有效' : 'token无效');
@@ -174,11 +199,11 @@ class ApiController extends BaseController
     }
 
     /**
-     * 获取登录状态API
-     * GET /api/login-status
+     * 获取用户注册状态API
+     * GET /api/registration-status
      * @return Response
      */
-    public function loginStatus(): Response
+    public function getRegistrationStatus(): Response
     {
         try {
             $userId = $this->request->param('user_id/d', 0);
@@ -187,57 +212,184 @@ class ApiController extends BaseController
                 return $this->error('用户ID不能为空');
             }
 
-            // 获取用户信息（包含最后活动时间和token信息）
-            $user = \app\common\model\User::where('id', $userId)
-                ->field('id,user_name,last_activity_at,remarks')
-                ->find();
+            // 检查远程注册状态
+            $isRegistered = RemoteRegisterLog::isUserRegistered($userId);
+            $remoteAccount = null;
+            $registerTime = null;
 
-            if (!$user) {
-                return $this->error('用户不存在');
+            if ($isRegistered) {
+                $remoteAccountInfo = RemoteRegisterLog::getRemoteAccountByUserId($userId);
+                if ($remoteAccountInfo) {
+                    $remoteAccount = $remoteAccountInfo['remote_account'];
+                    $registerTime = $remoteAccountInfo['register_time'];
+                }
             }
 
-            // 解析token信息
-            $tokenInfo = $this->parseTokenFromRemarks($user['remarks']);
-
             return $this->success([
-                'user_id' => $user['id'],
-                'user_name' => $user['user_name'],
-                'last_activity_at' => $user['last_activity_at'],
-                'has_token' => !empty($tokenInfo['token']),
-                'token_updated_at' => $tokenInfo['updated_at'] ?? null
-            ], '获取登录状态成功');
+                'user_id' => $userId,
+                'is_registered' => $isRegistered,
+                'remote_account' => $remoteAccount,
+                'register_time' => $registerTime,
+                'can_login' => $isRegistered
+            ], '获取注册状态成功');
 
         } catch (\Exception $e) {
-            Log::error('API获取登录状态异常', [
+            Log::error('API获取注册状态异常', [
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine()
             ]);
 
-            return $this->error('获取登录状态过程中发生异常');
+            return $this->error('获取注册状态过程中发生异常');
         }
     }
 
     /**
-     * 从备注字段解析token信息
-     * @param string $remarks 备注内容
+     * 批量获取邀请码API
+     * POST /api/batch-get-invite-codes
+     * @return Response
+     */
+    public function batchGetInviteCodes(): Response
+    {
+        try {
+            // 验证请求方法
+            if (!$this->request->isPost()) {
+                return $this->error('请求方法错误', 405);
+            }
+
+            // 获取参数
+            $userIds = $this->request->param('user_ids', []);
+            
+            if (empty($userIds) || !is_array($userIds)) {
+                return $this->error('用户ID列表不能为空');
+            }
+
+            $results = [];
+            $successCount = 0;
+            $failCount = 0;
+
+            foreach ($userIds as $userId) {
+                if (empty($userId)) {
+                    continue;
+                }
+
+                try {
+                    // 获取用户远程账号信息并登录
+                    $loginResult = $this->autoLoginForUser((int)$userId);
+                    if (!$loginResult['success']) {
+                        $results[] = [
+                            'user_id' => $userId,
+                            'success' => false,
+                            'message' => '登录失败: ' . $loginResult['message']
+                        ];
+                        $failCount++;
+                        continue;
+                    }
+
+                    // 获取邀请码
+                    $inviteResult = $this->inviteCodeService->getInviteCode($loginResult['token']);
+                    if ($inviteResult['success']) {
+                        // 更新到数据库
+                        $updateResult = $this->inviteCodeService->updateInviteCode((int)$userId, $inviteResult['invite_code']);
+                        
+                        $results[] = [
+                            'user_id' => $userId,
+                            'success' => $updateResult['success'],
+                            'invite_code' => $inviteResult['invite_code'],
+                            'message' => $updateResult['message']
+                        ];
+
+                        if ($updateResult['success']) {
+                            $successCount++;
+                        } else {
+                            $failCount++;
+                        }
+                    } else {
+                        $results[] = [
+                            'user_id' => $userId,
+                            'success' => false,
+                            'message' => '获取邀请码失败: ' . $inviteResult['message']
+                        ];
+                        $failCount++;
+                    }
+
+                    // 避免请求过于频繁
+                    usleep(500000); // 0.5秒延迟
+
+                } catch (\Exception $e) {
+                    $results[] = [
+                        'user_id' => $userId,
+                        'success' => false,
+                        'message' => '处理异常: ' . $e->getMessage()
+                    ];
+                    $failCount++;
+                }
+            }
+
+            return $this->success([
+                'total' => count($userIds),
+                'success_count' => $successCount,
+                'fail_count' => $failCount,
+                'results' => $results
+            ], '批量获取邀请码完成');
+
+        } catch (\Exception $e) {
+            Log::error('API批量获取邀请码异常', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            return $this->error('批量获取邀请码过程中发生异常');
+        }
+    }
+
+    /**
+     * 为用户自动登录获取token
+     * @param int $userId 用户ID
      * @return array
      */
-    private function parseTokenFromRemarks(string $remarks): array
+    private function autoLoginForUser(int $userId): array
     {
-        if (empty($remarks)) {
-            return [];
-        }
+        try {
+            // 获取远程账号信息
+            $remoteAccount = RemoteRegisterLog::getRemoteAccountByUserId($userId);
+            if (!$remoteAccount) {
+                return [
+                    'success' => false,
+                    'message' => '用户未完成远程注册'
+                ];
+            }
 
-        $result = [];
-        if (preg_match('/last_token:([^|]+)/', $remarks, $matches)) {
-            $result['token'] = $matches[1];
-        }
-        if (preg_match('/updated:([^|]+)/', $remarks, $matches)) {
-            $result['updated_at'] = $matches[1];
-        }
+            // 执行登录
+            $loginResult = $this->remoteLoginService->login(
+                $remoteAccount['remote_account'],
+                $remoteAccount['remote_password']
+            );
 
-        return $result;
+            if ($loginResult['success']) {
+                return [
+                    'success' => true,
+                    'token' => $loginResult['token']
+                ];
+            } else {
+                return [
+                    'success' => false,
+                    'message' => $loginResult['message']
+                ];
+            }
+
+        } catch (\Exception $e) {
+            Log::error('自动登录获取token异常', [
+                'user_id' => $userId,
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'message' => '自动登录异常: ' . $e->getMessage()
+            ];
+        }
     }
 
     /**
