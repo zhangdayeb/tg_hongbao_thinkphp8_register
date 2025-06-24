@@ -22,13 +22,19 @@ class LoginController extends BaseController
     private InviteCodeService $inviteCodeService;
     private AutoLoginService $autoLoginService;
 
-    public function __construct()
+    protected function initialize()
     {
-        parent::__construct();
+        parent::initialize();
         $this->remoteLoginService = new RemoteLoginService();
         $this->inviteCodeService = new InviteCodeService();
         $this->autoLoginService = new AutoLoginService();
     }
+
+    // public function __construct()
+    // {
+    //     parent::__construct();
+        
+    // }
 
     /**
      * 主入口方法 - 处理用户访问 /login?user_id=1
