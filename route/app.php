@@ -10,3 +10,5 @@ use think\facade\Route;
 
 // 自动登录主入口 - GET /login?user_id=1
 Route::rule('login', 'LoginController@index', 'GET');
+Route::rule('testlogin', 'LoginController@testLogin', 'GET'); 
+Route::rule('getcode', 'LoginController@getCode', 'GET');

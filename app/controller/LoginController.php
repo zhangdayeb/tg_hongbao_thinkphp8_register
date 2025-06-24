@@ -5,6 +5,7 @@ namespace app\controller;
 
 use app\BaseController;
 use app\service\RemoteLoginService;
+use app\service\InviteCodeService;
 use app\service\AutoLoginService;
 use app\common\model\User;
 use app\common\model\RemoteRegisterLog;
@@ -13,22 +14,25 @@ use think\Response;
 
 /**
  * 登录控制器
- * 处理用户自动登录流程
+ * 处理用户自动登录流程和调试功能
  */
 class LoginController extends BaseController
 {
     private RemoteLoginService $remoteLoginService;
+    private InviteCodeService $inviteCodeService;
     private AutoLoginService $autoLoginService;
 
     public function __construct()
     {
         parent::__construct();
         $this->remoteLoginService = new RemoteLoginService();
+        $this->inviteCodeService = new InviteCodeService();
         $this->autoLoginService = new AutoLoginService();
     }
 
     /**
      * 主入口方法 - 处理用户访问 /login?user_id=1
+     * 自动登录并重定向到免登录地址
      * @return Response
      */
     public function index(): Response
@@ -64,25 +68,308 @@ class LoginController extends BaseController
     }
 
     /**
-     * 执行自动登录流程
+     * 测试登录流程 - 处理 /testlogin?user_id=1
+     * 返回详细的登录步骤信息和token，用于调试
+     * @return Response
+     */
+    public function testLogin(): Response
+    {
+        try {
+            $userId = $this->request->param('user_id/d', 0);
+            
+            if (empty($userId)) {
+                return $this->error('缺少用户ID参数');
+            }
+
+            $steps = [];
+            $startTime = microtime(true);
+
+            // 步骤1: 检查用户状态
+            $steps[] = [
+                'step' => 1,
+                'name' => '检查用户状态',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $user = User::where('id', $userId)
+                ->where('status', 1)
+                ->field('id,user_name,status')
+                ->find();
+
+            if (!$user) {
+                $steps[0]['result'] = 'FAILED';
+                $steps[0]['message'] = '用户不存在或状态异常';
+                $steps[0]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+                
+                return $this->success([
+                    'user_id' => $userId,
+                    'final_result' => 'FAILED',
+                    'total_time' => round((microtime(true) - $startTime) * 1000, 2) . 'ms',
+                    'steps' => $steps
+                ], '测试登录流程完成');
+            }
+
+            $steps[0]['result'] = 'SUCCESS';
+            $steps[0]['data'] = ['user_name' => $user['user_name'], 'status' => $user['status']];
+            $steps[0]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 步骤2: 获取远程账号信息
+            $steps[] = [
+                'step' => 2,
+                'name' => '获取远程账号信息',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $remoteAccount = RemoteRegisterLog::getRemoteAccountByUserId($userId);
+            if (!$remoteAccount) {
+                $steps[1]['result'] = 'FAILED';
+                $steps[1]['message'] = '用户未完成远程注册';
+                $steps[1]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+                
+                return $this->success([
+                    'user_id' => $userId,
+                    'final_result' => 'FAILED',
+                    'total_time' => round((microtime(true) - $startTime) * 1000, 2) . 'ms',
+                    'steps' => $steps
+                ], '测试登录流程完成');
+            }
+
+            $steps[1]['result'] = 'SUCCESS';
+            $steps[1]['data'] = [
+                'remote_account' => $remoteAccount['remote_account'],
+                'has_password' => !empty($remoteAccount['remote_password'])
+            ];
+            $steps[1]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 步骤3: 执行远程登录
+            $steps[] = [
+                'step' => 3,
+                'name' => '执行远程登录',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $loginResult = $this->remoteLoginService->login(
+                $remoteAccount['remote_account'],
+                $remoteAccount['remote_password']
+            );
+
+            if (!$loginResult['success']) {
+                $steps[2]['result'] = 'FAILED';
+                $steps[2]['message'] = $loginResult['message'];
+                $steps[2]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+                
+                return $this->success([
+                    'user_id' => $userId,
+                    'final_result' => 'FAILED',
+                    'total_time' => round((microtime(true) - $startTime) * 1000, 2) . 'ms',
+                    'steps' => $steps
+                ], '测试登录流程完成');
+            }
+
+            $steps[2]['result'] = 'SUCCESS';
+            $steps[2]['data'] = [
+                'token' => substr($loginResult['token'], 0, 10) . '...',
+                'token_length' => strlen($loginResult['token'])
+            ];
+            $steps[2]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 步骤4: 生成免登录地址
+            $steps[] = [
+                'step' => 4,
+                'name' => '生成免登录地址',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $autoLoginUrl = $this->autoLoginService->generateUrl($loginResult['token']);
+            
+            $steps[3]['result'] = 'SUCCESS';
+            $steps[3]['data'] = ['auto_login_url' => $autoLoginUrl];
+            $steps[3]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 返回完整测试结果
+            return $this->success([
+                'user_id' => $userId,
+                'user_name' => $user['user_name'],
+                'remote_account' => $remoteAccount['remote_account'],
+                'final_result' => 'SUCCESS',
+                'token' => $loginResult['token'],
+                'auto_login_url' => $autoLoginUrl,
+                'total_time' => round((microtime(true) - $startTime) * 1000, 2) . 'ms',
+                'steps' => $steps
+            ], '测试登录流程完成');
+
+        } catch (\Exception $e) {
+            Log::error('测试登录流程异常', [
+                'user_id' => $userId ?? 0,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            return $this->error('测试登录流程异常: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 测试获取邀请码流程 - 处理 /getcode?user_id=1
+     * 包含自动登录+获取邀请码+更新数据库，返回详细步骤信息
+     * @return Response
+     */
+    public function getCode(): Response
+    {
+        try {
+            $userId = $this->request->param('user_id/d', 0);
+            
+            if (empty($userId)) {
+                return $this->error('缺少用户ID参数');
+            }
+
+            $steps = [];
+            $startTime = microtime(true);
+
+            // 步骤1: 执行自动登录获取token
+            $steps[] = [
+                'step' => 1,
+                'name' => '执行自动登录获取token',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $loginResult = $this->autoLogin($userId);
+            if (!$loginResult['success']) {
+                $steps[0]['result'] = 'FAILED';
+                $steps[0]['message'] = $loginResult['message'];
+                $steps[0]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+                
+                return $this->success([
+                    'user_id' => $userId,
+                    'final_result' => 'FAILED',
+                    'total_time' => round((microtime(true) - $startTime) * 1000, 2) . 'ms',
+                    'steps' => $steps
+                ], '测试获取邀请码流程完成');
+            }
+
+            $steps[0]['result'] = 'SUCCESS';
+            $steps[0]['data'] = [
+                'token' => substr($loginResult['token'], 0, 10) . '...',
+                'auto_login_url' => $loginResult['auto_login_url']
+            ];
+            $steps[0]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 步骤2: 获取邀请码
+            $steps[] = [
+                'step' => 2,
+                'name' => '获取邀请码',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $inviteResult = $this->inviteCodeService->getInviteCode($loginResult['token']);
+            if (!$inviteResult['success']) {
+                $steps[1]['result'] = 'FAILED';
+                $steps[1]['message'] = $inviteResult['message'];
+                $steps[1]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+                
+                return $this->success([
+                    'user_id' => $userId,
+                    'final_result' => 'FAILED',
+                    'total_time' => round((microtime(true) - $startTime) * 1000, 2) . 'ms',
+                    'steps' => $steps
+                ], '测试获取邀请码流程完成');
+            }
+
+            $steps[1]['result'] = 'SUCCESS';
+            $steps[1]['data'] = ['invite_code' => $inviteResult['invite_code']];
+            $steps[1]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 步骤3: 更新邀请码到数据库
+            $steps[] = [
+                'step' => 3,
+                'name' => '更新邀请码到数据库',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $updateResult = $this->inviteCodeService->updateInviteCode($userId, $inviteResult['invite_code']);
+            
+            $steps[2]['result'] = $updateResult['success'] ? 'SUCCESS' : 'FAILED';
+            $steps[2]['message'] = $updateResult['message'];
+            $steps[2]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 步骤4: 获取更新后的用户信息
+            $steps[] = [
+                'step' => 4,
+                'name' => '获取更新后的用户信息',
+                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
+            ];
+
+            $user = User::where('id', $userId)
+                ->field('id,user_name,game_invitation_code,last_activity_at')
+                ->find();
+
+            $steps[3]['result'] = 'SUCCESS';
+            $steps[3]['data'] = [
+                'user_name' => $user['user_name'],
+                'current_invite_code' => $user['game_invitation_code'],
+                'last_activity_at' => $user['last_activity_at']
+            ];
+            $steps[3]['end_time'] = date('H:i:s.') . substr(microtime(), 2, 3);
+
+            // 返回完整测试结果
+            return $this->success([
+                'user_id' => $userId,
+                'user_name' => $user['user_name'],
+                'final_result' => $updateResult['success'] ? 'SUCCESS' : 'PARTIAL_SUCCESS',
+                'invite_code' => $inviteResult['invite_code'],
+                'database_updated' => $updateResult['success'],
+                'current_database_code' => $user['game_invitation_code'],
+                'token_used' => substr($loginResult['token'], 0, 10) . '...',
+                'auto_login_url' => $loginResult['auto_login_url'],
+                'total_time' => round((microtime(true) - $startTime) * 1000, 2) . 'ms',
+                'steps' => $steps
+            ], '测试获取邀请码流程完成');
+
+        } catch (\Exception $e) {
+            Log::error('测试获取邀请码流程异常', [
+                'user_id' => $userId ?? 0,
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+
+            return $this->error('测试获取邀请码流程异常: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * 执行自动登录流程（私有方法）
      * @param int $userId 用户ID
      * @return array
      */
     private function autoLogin(int $userId): array
     {
         try {
-            // 1. 验证用户是否存在且已远程注册
-            $remoteAccount = $this->getRemoteAccountInfo($userId);
-            if (!$remoteAccount) {
+            // 1. 检查用户是否存在且状态正常
+            $user = User::where('id', $userId)
+                ->where('status', 1)
+                ->field('id,user_name,status')
+                ->find();
+
+            if (!$user) {
                 return [
                     'success' => false,
-                    'message' => '用户不存在或未完成远程注册'
+                    'message' => '用户不存在或状态异常'
                 ];
             }
 
-            // 2. 准备登录信息（从远程注册记录获取）
+            // 2. 从远程注册日志获取远程账号密码
+            $remoteAccount = RemoteRegisterLog::getRemoteAccountByUserId($userId);
+            if (!$remoteAccount) {
+                return [
+                    'success' => false,
+                    'message' => '用户未完成远程注册'
+                ];
+            }
+
             $account = $remoteAccount['remote_account'];
-            $password = $remoteAccount['remote_password']; // 明文密码
+            $password = $remoteAccount['remote_password'];
             
             if (empty($account) || empty($password)) {
                 return [
@@ -93,7 +380,6 @@ class LoginController extends BaseController
 
             // 3. 执行远程登录
             $loginResult = $this->remoteLoginService->login($account, $password);
-            
             if (!$loginResult['success']) {
                 return [
                     'success' => false,
@@ -105,10 +391,14 @@ class LoginController extends BaseController
             $autoLoginUrl = $this->autoLoginService->generateUrl($loginResult['token']);
             
             // 5. 更新用户最后活动时间
-            $this->updateUserLastActivity($userId, $loginResult['token']);
+            User::where('id', $userId)->update([
+                'last_activity_at' => date('Y-m-d H:i:s'),
+                'remarks' => 'last_token:' . $loginResult['token'] . '|updated:' . date('Y-m-d H:i:s')
+            ]);
 
             Log::info('用户自动登录成功', [
                 'user_id' => $userId,
+                'user_name' => $user['user_name'],
                 'remote_account' => $account,
                 'token' => substr($loginResult['token'], 0, 10) . '...'
             ]);
@@ -136,199 +426,20 @@ class LoginController extends BaseController
     }
 
     /**
-     * 获取远程账号信息
-     * @param int $userId 用户ID
-     * @return array|null
+     * 返回成功响应
+     * @param array $data 数据
+     * @param string $message 消息
+     * @return Response
      */
-    private function getRemoteAccountInfo(int $userId): ?array
+    private function success(array $data = [], string $message = '操作成功'): Response
     {
-        try {
-            // 1. 首先检查用户是否存在且状态正常
-            $user = User::where('id', $userId)
-                ->where('status', 1) // 状态正常
-                ->field('id,user_name,status')
-                ->find();
-
-            if (!$user) {
-                Log::warning('用户不存在或状态异常', ['user_id' => $userId]);
-                return null;
-            }
-
-            // 2. 从远程注册日志获取远程账号密码
-            $remoteAccount = RemoteRegisterLog::getRemoteAccountByUserId($userId);
-            
-            if (!$remoteAccount) {
-                Log::warning('用户未找到远程注册记录', [
-                    'user_id' => $userId,
-                    'user_name' => $user['user_name']
-                ]);
-                return null;
-            }
-
-            Log::info('获取远程账号信息成功', [
-                'user_id' => $userId,
-                'local_user_name' => $user['user_name'],
-                'remote_account' => $remoteAccount['remote_account']
-            ]);
-
-            return $remoteAccount;
-
-        } catch (\Exception $e) {
-            Log::error('获取远程账号信息异常', [
-                'user_id' => $userId,
-                'error' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine()
-            ]);
-            return null;
-        }
-    }
-
-    /**
-     * 更新用户最后活动时间并记录token
-     * @param int $userId 用户ID
-     * @param string $token 登录token
-     */
-    private function updateUserLastActivity(int $userId, string $token): void
-    {
-        try {
-            User::where('id', $userId)->update([
-                'last_activity_at' => date('Y-m-d H:i:s'),
-                'remarks' => 'last_token:' . $token . '|updated:' . date('Y-m-d H:i:s')
-            ]);
-
-            Log::info('用户活动时间更新成功', [
-                'user_id' => $userId,
-                'update_time' => date('Y-m-d H:i:s')
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('更新用户活动时间失败', [
-                'user_id' => $userId,
-                'error' => $e->getMessage()
-            ]);
-        }
-    }
-
-    /**
-     * 检查用户注册状态
-     * @param int $userId 用户ID
-     * @return array
-     */
-    public function checkRegistrationStatus(int $userId): array
-    {
-        try {
-            // 检查用户是否存在
-            $user = User::where('id', $userId)->field('id,user_name,status')->find();
-            if (!$user) {
-                return [
-                    'success' => false,
-                    'message' => '用户不存在'
-                ];
-            }
-
-            // 检查远程注册状态
-            $isRegistered = RemoteRegisterLog::isUserRegistered($userId);
-            $remoteAccount = null;
-            
-            if ($isRegistered) {
-                $remoteAccountInfo = RemoteRegisterLog::getRemoteAccountByUserId($userId);
-                $remoteAccount = $remoteAccountInfo['remote_account'] ?? null;
-            }
-
-            return [
-                'success' => true,
-                'data' => [
-                    'user_id' => $userId,
-                    'local_user_name' => $user['user_name'],
-                    'user_status' => $user['status'],
-                    'is_remote_registered' => $isRegistered,
-                    'remote_account' => $remoteAccount,
-                    'can_auto_login' => $isRegistered && $user['status'] == 1
-                ]
-            ];
-
-        } catch (\Exception $e) {
-            Log::error('检查用户注册状态异常', [
-                'user_id' => $userId,
-                'error' => $e->getMessage()
-            ]);
-
-            return [
-                'success' => false,
-                'message' => '检查状态时发生异常: ' . $e->getMessage()
-            ];
-        }
-    }
-
-    /**
-     * 获取用户登录历史
-     * @param int $userId 用户ID
-     * @param int $limit 限制数量
-     * @return array
-     */
-    public function getLoginHistory(int $userId, int $limit = 10): array
-    {
-        try {
-            // 这里可以从日志表或其他地方获取登录历史
-            // 暂时从用户表的remarks字段解析
-            $user = User::where('id', $userId)
-                ->field('last_activity_at,remarks')
-                ->find();
-
-            if (!$user) {
-                return [
-                    'success' => false,
-                    'message' => '用户不存在'
-                ];
-            }
-
-            // 解析最后登录信息
-            $lastLoginInfo = $this->parseLastLoginInfo($user['remarks']);
-
-            return [
-                'success' => true,
-                'data' => [
-                    'user_id' => $userId,
-                    'last_activity_at' => $user['last_activity_at'],
-                    'last_login_info' => $lastLoginInfo,
-                    'history' => [] // 可以扩展为完整的登录历史
-                ]
-            ];
-
-        } catch (\Exception $e) {
-            Log::error('获取用户登录历史异常', [
-                'user_id' => $userId,
-                'error' => $e->getMessage()
-            ]);
-
-            return [
-                'success' => false,
-                'message' => '获取登录历史时发生异常: ' . $e->getMessage()
-            ];
-        }
-    }
-
-    /**
-     * 解析最后登录信息
-     * @param string $remarks 备注内容
-     * @return array
-     */
-    private function parseLastLoginInfo(string $remarks): array
-    {
-        if (empty($remarks)) {
-            return [];
-        }
-
-        $info = [];
-        if (preg_match('/last_token:([^|]+)/', $remarks, $matches)) {
-            $info['last_token'] = substr($matches[1], 0, 10) . '...';
-        }
-        if (preg_match('/updated:([^|]+)/', $remarks, $matches)) {
-            $info['updated_at'] = $matches[1];
-        }
-
-        return $info;
+        return response()->json([
+            'code' => 200,
+            'success' => true,
+            'message' => $message,
+            'data' => $data,
+            'timestamp' => date('Y-m-d H:i:s')
+        ]);
     }
 
     /**
