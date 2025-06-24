@@ -50,13 +50,13 @@ class RemoteLoginService
             }
 
             // 步骤4: 处理滑动验证
-            $sliderResult = $this->handleSliderVerification();
-            if (!$sliderResult['success']) {
-                return [
-                    'success' => false,
-                    'message' => '滑动验证失败: ' . $sliderResult['message']
-                ];
-            }
+            // $sliderResult = $this->handleSliderVerification();
+            // if (!$sliderResult['success']) {
+            //     return [
+            //         'success' => false,
+            //         'message' => '滑动验证失败: ' . $sliderResult['message']
+            //     ];
+            // }
 
             // 步骤5: 执行最终登录
             $finalLoginResult = $this->executeLogin($account, $password);
