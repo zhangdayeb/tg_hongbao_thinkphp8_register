@@ -44,6 +44,40 @@ class RemoteRegister extends Command
     }
 
     /**
+     * 获取邀请人的推荐码（用于注册时填写）
+     * @param int $userId 被邀请人用户ID
+     * @return string 邀请人的game_invitation_code，没有则返回空字符串
+     */
+    private function getInviterReferralCode($userId)
+    {
+        try {
+            // 从ntp_user_invitations表查找邀请关系
+            $invitation = Db::name('user_invitations')
+                ->where('invitee_id', $userId)
+                ->field('inviter_id')
+                ->find();
+            
+            if (!$invitation || !$invitation['inviter_id']) {
+                return '';
+            }
+            
+            // 获取邀请人的game_invitation_code
+            $inviterCode = Db::name('common_user')
+                ->where('id', $invitation['inviter_id'])
+                ->value('game_invitation_code');
+            
+            return $inviterCode ?: '';
+            
+        } catch (\Exception $e) {
+            Log::error('获取邀请人推荐码异常', [
+                'user_id' => $userId,
+                'error' => $e->getMessage()
+            ]);
+            return '';
+        }
+    }
+
+    /**
      * 获取最近2分钟内新增的用户
      */
     private function getNewUsers()
@@ -72,15 +106,22 @@ class RemoteRegister extends Command
         $remoteAccount = $this->generateRemoteAccount($user);
         $remotePassword = '123456'; // 默认密码
         
+        // 获取邀请人的邀请码（用于注册时的推荐码）
+        $referralCode = $this->getInviterReferralCode($user['id']);
+        
         try {
             // 执行远程注册
-            $registerResult = $this->doRemoteRegister($remoteAccount, $remotePassword);
+            $registerResult = $this->doRemoteRegister($remoteAccount, $remotePassword, $referralCode);
             
             // 记录注册结果
             $this->logRegistrationResult($user['id'], $remoteAccount, $remotePassword, $registerResult);
             
             if ($registerResult['success']) {
-                $output->writeln("用户 {$user['user_name']} 注册成功");
+                $output->writeln("用户 {$user['user_name']} 注册成功" . 
+                    ($referralCode ? "，使用推荐码: {$referralCode}" : ""));
+                
+                // 注册成功后，获取邀请码
+                $this->processInviteCodeAfterRegistration($user, $remoteAccount, $remotePassword, $output);
             } else {
                 $output->writeln("用户 {$user['user_name']} 注册失败: " . $registerResult['message']);
             }
@@ -92,6 +133,67 @@ class RemoteRegister extends Command
             $this->logRegistrationResult($user['id'], $remoteAccount, $remotePassword, [
                 'success' => false,
                 'message' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 注册成功后处理邀请码获取
+     */
+    private function processInviteCodeAfterRegistration($user, $remoteAccount, $remotePassword, Output $output)
+    {
+        try {
+            $output->writeln("开始获取用户 {$user['user_name']} 的邀请码...");
+            
+            // 等待1秒，确保注册完全成功
+            sleep(1);
+            
+            // 使用项目现有的服务类
+            $remoteLoginService = new \app\service\RemoteLoginService();
+            $inviteCodeService = new \app\service\InviteCodeService();
+            
+            // 1. 先登录获取token
+            $loginResult = $remoteLoginService->login($remoteAccount, $remotePassword);
+            
+            if (!$loginResult['success']) {
+                $output->writeln("用户 {$user['user_name']} 登录失败: " . $loginResult['message']);
+                return;
+            }
+            
+            $output->writeln("用户 {$user['user_name']} 登录成功，获取到token");
+            
+            // 2. 使用token获取邀请码
+            $inviteResult = $inviteCodeService->getInviteCode($loginResult['token']);
+            
+            if ($inviteResult['success']) {
+                // 3. 更新邀请码到common_user表
+                $updateResult = $inviteCodeService->updateInviteCode($user['id'], $inviteResult['invite_code']);
+                
+                if ($updateResult['success']) {
+                    $output->writeln("用户 {$user['user_name']} 邀请码获取并保存成功: " . $inviteResult['invite_code']);
+                    
+                    // 记录日志
+                    Log::info('注册后邀请码获取成功', [
+                        'user_id' => $user['id'],
+                        'user_name' => $user['user_name'],
+                        'remote_account' => $remoteAccount,
+                        'invite_code' => $inviteResult['invite_code']
+                    ]);
+                } else {
+                    $output->writeln("用户 {$user['user_name']} 邀请码获取成功但保存失败: " . $updateResult['message']);
+                }
+            } else {
+                $output->writeln("用户 {$user['user_name']} 邀请码获取失败: " . $inviteResult['message']);
+            }
+            
+        } catch (\Exception $e) {
+            $output->writeln("用户 {$user['user_name']} 邀请码处理异常: " . $e->getMessage());
+            
+            Log::error('注册后邀请码获取异常', [
+                'user_id' => $user['id'],
+                'user_name' => $user['user_name'],
+                'remote_account' => $remoteAccount,
+                'error' => $e->getMessage()
             ]);
         }
     }
@@ -115,7 +217,7 @@ class RemoteRegister extends Command
     /**
      * 执行远程注册
      */
-    private function doRemoteRegister($account, $password)
+    private function doRemoteRegister($account, $password, $referralCode = '')
     {
         $baseUrl = 'https://www.cg888.vip/api/core/member/frontend';
         
@@ -148,7 +250,8 @@ class RemoteRegister extends Command
             $registerResponse = $this->makeApiRequest($baseUrl . '/register', 'POST', [
                 'account' => $account,
                 'password' => $password,
-                'referralCode' => '' // 推荐码为空
+                'referralCode' => $referralCode, // 使用邀请人的邀请码
+                'registerDomain' => 'https://www.cg888.vip/'
             ]);
 
             if ($registerResponse && $registerResponse['code'] == 200) {
