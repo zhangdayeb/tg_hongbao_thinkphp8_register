@@ -30,12 +30,6 @@ class LoginController extends BaseController
         $this->autoLoginService = new AutoLoginService();
     }
 
-    // public function __construct()
-    // {
-    //     parent::__construct();
-        
-    // }
-
     /**
      * 主入口方法 - 处理用户访问 /login?user_id=1
      * 自动登录并重定向到免登录地址
@@ -439,7 +433,7 @@ class LoginController extends BaseController
      */
     private function success(array $data = [], string $message = '操作成功'): Response
     {
-        return response()->json([
+        return json([
             'code' => 200,
             'success' => true,
             'message' => $message,
@@ -455,7 +449,7 @@ class LoginController extends BaseController
      */
     private function error(string $message): Response
     {
-        return response()->json([
+        return json([
             'code' => 400,
             'success' => false,
             'message' => $message,
