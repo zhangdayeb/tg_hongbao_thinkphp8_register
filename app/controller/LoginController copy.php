@@ -6,6 +6,7 @@ namespace app\controller;
 use app\BaseController;
 use app\service\RemoteLoginService;
 use app\service\InviteCodeService;
+use app\service\AutoLoginService;
 use app\common\model\User;
 use app\common\model\RemoteRegisterLog;
 use think\facade\Log;
@@ -19,16 +20,14 @@ class LoginController extends BaseController
 {
     private RemoteLoginService $remoteLoginService;
     private InviteCodeService $inviteCodeService;
-
-    // 免登录基础URL配置
-    private const AUTO_LOGIN_BASE_URL = 'https://www.cg888.vip/';
-    private const DEFAULT_SOURCE = 'tg';
+    private AutoLoginService $autoLoginService;
 
     protected function initialize()
     {
         parent::initialize();
         $this->remoteLoginService = new RemoteLoginService();
         $this->inviteCodeService = new InviteCodeService();
+        $this->autoLoginService = new AutoLoginService();
     }
 
     /**
@@ -38,61 +37,29 @@ class LoginController extends BaseController
      */
     public function index(): Response
     {
-        $startTime = microtime(true);
-        $requestId = uniqid('main_login_');
-        
         try {
             // 获取用户ID参数
             $userId = $this->request->param('user_id/d', 0);
             
             if (empty($userId)) {
-                Log::warning('主登录入口缺少用户ID', ['request_id' => $requestId]);
                 return $this->error('缺少用户ID参数');
             }
 
-            Log::info('开始主登录流程', [
-                'request_id' => $requestId,
-                'user_id' => $userId,
-                'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
-            ]);
-
             // 执行自动登录
-            $result = $this->autoLogin($userId, $requestId);
-            
-            $totalTime = round((microtime(true) - $startTime) * 1000, 2);
+            $result = $this->autoLogin($userId);
             
             if ($result['success']) {
-                Log::info('主登录流程成功，准备重定向', [
-                    'request_id' => $requestId,
-                    'user_id' => $userId,
-                    'auto_login_url' => $result['auto_login_url'],
-                    'total_time' => $totalTime . 'ms'
-                ]);
-                
                 // 登录成功，重定向到免登录地址
                 return redirect($result['auto_login_url']);
             } else {
-                Log::error('主登录流程失败', [
-                    'request_id' => $requestId,
-                    'user_id' => $userId,
-                    'error' => $result['message'],
-                    'total_time' => $totalTime . 'ms'
-                ]);
-                
                 // 登录失败，返回错误信息
                 return $this->error($result['message']);
             }
 
         } catch (\Exception $e) {
-            $totalTime = round((microtime(true) - $startTime) * 1000, 2);
-            
-            Log::error('主登录控制器异常', [
-                'request_id' => $requestId,
-                'user_id' => $userId ?? 0,
-                'error' => $e->getMessage(),
+            Log::error('登录控制器异常: ' . $e->getMessage(), [
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'total_time' => $totalTime . 'ms',
                 'trace' => $e->getTraceAsString()
             ]);
             
@@ -213,7 +180,7 @@ class LoginController extends BaseController
                 'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
             ];
 
-            $autoLoginUrl = $this->generateAutoLoginUrl($loginResult['token']);
+            $autoLoginUrl = $this->autoLoginService->generateUrl($loginResult['token']);
             
             $steps[3]['result'] = 'SUCCESS';
             $steps[3]['data'] = ['auto_login_url' => $autoLoginUrl];
@@ -259,7 +226,6 @@ class LoginController extends BaseController
 
             $steps = [];
             $startTime = microtime(true);
-            $requestId = uniqid('getcode_');
 
             // 步骤1: 执行自动登录获取token
             $steps[] = [
@@ -268,7 +234,7 @@ class LoginController extends BaseController
                 'start_time' => date('H:i:s.') . substr(microtime(), 2, 3)
             ];
 
-            $loginResult = $this->autoLogin($userId, $requestId);
+            $loginResult = $this->autoLogin($userId);
             if (!$loginResult['success']) {
                 $steps[0]['result'] = 'FAILED';
                 $steps[0]['message'] = $loginResult['message'];
@@ -375,21 +341,11 @@ class LoginController extends BaseController
     /**
      * 执行自动登录流程（私有方法）
      * @param int $userId 用户ID
-     * @param string $requestId 请求ID
      * @return array
      */
-    private function autoLogin(int $userId, string $requestId = ''): array
+    private function autoLogin(int $userId): array
     {
-        if (empty($requestId)) {
-            $requestId = uniqid('auto_login_');
-        }
-        
         try {
-            Log::info('开始自动登录流程', [
-                'request_id' => $requestId,
-                'user_id' => $userId
-            ]);
-
             // 1. 检查用户是否存在且状态正常
             $user = User::where('id', $userId)
                 ->where('status', 1)
@@ -427,12 +383,12 @@ class LoginController extends BaseController
             if (!$loginResult['success']) {
                 return [
                     'success' => false,
-                    'message' => $loginResult['message'] // 已经是友好的错误信息
+                    'message' => '远程登录失败: ' . $loginResult['message']
                 ];
             }
 
             // 4. 生成免登录地址
-            $autoLoginUrl = $this->generateAutoLoginUrl($loginResult['token']);
+            $autoLoginUrl = $this->autoLoginService->generateUrl($loginResult['token']);
             
             // 5. 更新用户最后活动时间
             User::where('id', $userId)->update([
@@ -441,12 +397,10 @@ class LoginController extends BaseController
             ]);
 
             Log::info('用户自动登录成功', [
-                'request_id' => $requestId,
                 'user_id' => $userId,
                 'user_name' => $user['user_name'],
                 'remote_account' => $account,
-                'token' => substr($loginResult['token'], 0, 10) . '...',
-                'auto_login_url' => $autoLoginUrl
+                'token' => substr($loginResult['token'], 0, 10) . '...'
             ]);
 
             return [
@@ -458,7 +412,6 @@ class LoginController extends BaseController
 
         } catch (\Exception $e) {
             Log::error('自动登录异常', [
-                'request_id' => $requestId,
                 'user_id' => $userId,
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
@@ -467,46 +420,8 @@ class LoginController extends BaseController
 
             return [
                 'success' => false,
-                'message' => '登录过程中发生异常，请稍后重试'
+                'message' => '登录过程中发生异常: ' . $e->getMessage()
             ];
-        }
-    }
-
-    /**
-     * 生成免登录地址
-     * @param string $token 登录token
-     * @param string $source 来源标识
-     * @return string
-     */
-    private function generateAutoLoginUrl(string $token, string $source = self::DEFAULT_SOURCE): string
-    {
-        try {
-            // 构建免登录URL
-            $params = [
-                'fr' => $source,
-                't' => $token
-            ];
-
-            $queryString = http_build_query($params);
-            $url = self::AUTO_LOGIN_BASE_URL . '?' . $queryString;
-
-            Log::info('生成免登录地址', [
-                'token' => substr($token, 0, 10) . '...',
-                'source' => $source,
-                'url' => $url
-            ]);
-
-            return $url;
-
-        } catch (\Exception $e) {
-            Log::error('生成免登录地址异常', [
-                'token' => substr($token, 0, 10) . '...',
-                'source' => $source,
-                'error' => $e->getMessage()
-            ]);
-
-            // 异常情况下返回基础URL
-            return self::AUTO_LOGIN_BASE_URL;
         }
     }
 
