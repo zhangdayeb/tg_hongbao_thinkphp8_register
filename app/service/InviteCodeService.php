@@ -13,7 +13,7 @@ use think\facade\Log;
 class InviteCodeService
 {
     // 直接调用后端API获取邀请码
-    private const INVITE_CODE_API = env('WEB_URL', '').'api/core/member/frontend/agent-code/list';
+    private string $INVITE_CODE_API = env('WEB_URL', '').'api/core/member/frontend/agent-code/list';
     
     // 请求超时时间
     private const TIMEOUT = 30;
@@ -89,7 +89,7 @@ class InviteCodeService
             // 初始化cURL
             $ch = curl_init();
             curl_setopt_array($ch, [
-                CURLOPT_URL => self::INVITE_CODE_API,
+                CURLOPT_URL => $this->INVITE_CODE_API,
                 CURLOPT_POST => true,
                 CURLOPT_POSTFIELDS => '{}',
                 CURLOPT_HTTPHEADER => $headers,

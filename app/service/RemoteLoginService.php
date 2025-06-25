@@ -12,7 +12,7 @@ use think\facade\Log;
 class RemoteLoginService
 {
     // API基础URL
-    private const BASE_URL = env('WEB_URL', '').'api/core/member/frontend';
+    private string $BASE_URL = env('WEB_URL', '').'api/core/member/frontend';
     
     // 请求超时时间
     private const TIMEOUT = 30;
@@ -369,7 +369,7 @@ class RemoteLoginService
     private function getVerifyKey(string $requestId): array
     {
         try {
-            $url = self::BASE_URL . '/login/verify-key/get';
+            $url = $this->BASE_URL . '/login/verify-key/get';
             
             Log::info('发送获取验证数据请求', [
                 'request_id' => $requestId,
@@ -445,7 +445,7 @@ class RemoteLoginService
     private function loginVerify(int $verifyKey, string $requestId): array
     {
         try {
-            $url = self::BASE_URL . '/login/verify';
+            $url = $this->BASE_URL . '/login/verify';
             $data = ['verifyKey' => $verifyKey];
             
             Log::info('发送登录验证请求', [
@@ -495,7 +495,7 @@ class RemoteLoginService
     private function executeLogin(string $account, string $password, string $requestId): array
     {
         try {
-            $url = self::BASE_URL . '/login';
+            $url = $this->BASE_URL . '/login';
             $data = [
                 'account' => $account,
                 'password' => $password

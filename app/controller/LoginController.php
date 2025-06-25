@@ -21,7 +21,7 @@ class LoginController extends BaseController
     private InviteCodeService $inviteCodeService;
 
     // 免登录基础URL配置
-    private const AUTO_LOGIN_BASE_URL = env('WEB_URL', '');
+    private string $AUTO_LOGIN_BASE_URL = env('WEB_URL', '');
     private const DEFAULT_SOURCE = 'tg';
 
     protected function initialize()
@@ -510,7 +510,7 @@ class LoginController extends BaseController
             ];
 
             $queryString = http_build_query($params);
-            $url = self::AUTO_LOGIN_BASE_URL . '?' . $queryString;
+            $url = $this->AUTO_LOGIN_BASE_URL . '?' . $queryString;
 
             Log::info('生成免登录地址', [
                 'token' => substr($token, 0, 10) . '...',
@@ -528,7 +528,7 @@ class LoginController extends BaseController
             ]);
 
             // 异常情况下返回基础URL
-            return self::AUTO_LOGIN_BASE_URL;
+            return $this->AUTO_LOGIN_BASE_URL;
         }
     }
 
