@@ -432,7 +432,7 @@ class LoginController extends BaseController
             if (!$remoteAccount) {
                 return [
                     'success' => false,
-                    'message' => '用户未完成远程注册(首次登录自动注册)，请重新登录！'
+                    'message' => '用户未注册，请先私聊机器人自动注册！'
                 ];
             }
 
