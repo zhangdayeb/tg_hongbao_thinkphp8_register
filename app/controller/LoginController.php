@@ -21,7 +21,7 @@ class LoginController extends BaseController
     private InviteCodeService $inviteCodeService;
 
     // 免登录基础URL配置
-    private const AUTO_LOGIN_BASE_URL = 'https://www.cg888.vip/';
+    private const AUTO_LOGIN_BASE_URL = env('WEB_URL', '');
     private const DEFAULT_SOURCE = 'tg';
 
     protected function initialize()

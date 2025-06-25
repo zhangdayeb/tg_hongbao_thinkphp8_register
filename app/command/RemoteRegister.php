@@ -219,7 +219,7 @@ class RemoteRegister extends Command
      */
     private function doRemoteRegister($account, $password, $referralCode = '')
     {
-        $baseUrl = 'https://www.cg888.vip/api/core/member/frontend';
+        $baseUrl = env('WEB_URL', '').'api/core/member/frontend';
         
         try {
             // 1. 获取配置信息
@@ -251,7 +251,7 @@ class RemoteRegister extends Command
                 'account' => $account,
                 'password' => $password,
                 'referralCode' => $referralCode, // 使用邀请人的邀请码
-                'registerDomain' => 'https://www.cg888.vip/'
+                'registerDomain' => env('WEB_URL', '')
             ]);
 
             if ($registerResponse && $registerResponse['code'] == 200) {

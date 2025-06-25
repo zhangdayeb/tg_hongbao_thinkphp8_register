@@ -12,7 +12,7 @@ use think\facade\Log;
 class RemoteLoginService
 {
     // API基础URL
-    private const BASE_URL = 'https://www.cg888.vip/api/core/member/frontend';
+    private const BASE_URL = env('WEB_URL', '').'api/core/member/frontend';
     
     // 请求超时时间
     private const TIMEOUT = 30;

@@ -13,7 +13,7 @@ use think\facade\Log;
 class InviteCodeService
 {
     // 直接调用后端API获取邀请码
-    private const INVITE_CODE_API = 'https://www.cg888.vip/api/core/member/frontend/agent-code/list';
+    private const INVITE_CODE_API = env('WEB_URL', '').'api/core/member/frontend/agent-code/list';
     
     // 请求超时时间
     private const TIMEOUT = 30;
@@ -81,8 +81,8 @@ class InviteCodeService
                 'DeviceId: 1y8cw7k2sgkt4m0vom3zm3sqzzmummpr',
                 'Locale: zh_cn',
                 'LoginDeviceType: MOBILE',
-                'Origin: https://www.cg888.vip',
-                'Referer: https://www.cg888.vip/profile/share',
+                'Origin: '.env('WEB_URL', ''),
+                'Referer: '.env('WEB_URL', '').'profile/share',
                 'User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
             ];
 
