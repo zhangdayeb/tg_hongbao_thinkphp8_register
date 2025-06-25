@@ -10,6 +10,7 @@ use think\facade\Log;
 
 class RemoteRegister extends Command
 {
+    // 修复：将env()调用移到方法中使用
     protected function configure()
     {
         $this->setName('remote:register')
@@ -90,7 +91,7 @@ class RemoteRegister extends Command
             ->leftJoin('remote_register_log r', 'u.id = r.local_user_id')
             ->where('u.create_time', '>=', $twoMinutesAgo)
             ->where('r.id', 'null')
-            ->field('u.id, u.user_name, u.tg_first_name, u.tg_last_name, u.create_time')
+            ->field('u.id, u.tg_id, u.user_name, u.tg_first_name, u.tg_last_name, u.create_time')
             ->select()
             ->toArray();
     }
@@ -100,7 +101,7 @@ class RemoteRegister extends Command
      */
     private function processUserRegistration($user, Output $output)
     {
-        $output->writeln("正在注册用户: {$user['user_name']}");
+        $output->writeln("正在注册用户: {$user['tg_id']}");
         
         // 生成远程账号和密码
         $remoteAccount = $this->generateRemoteAccount($user);
@@ -117,17 +118,17 @@ class RemoteRegister extends Command
             $this->logRegistrationResult($user['id'], $remoteAccount, $remotePassword, $registerResult);
             
             if ($registerResult['success']) {
-                $output->writeln("用户 {$user['user_name']} 注册成功" . 
+                $output->writeln("用户 {$user['tg_id']} 注册成功" . 
                     ($referralCode ? "，使用推荐码: {$referralCode}" : ""));
                 
                 // 注册成功后，获取邀请码
                 $this->processInviteCodeAfterRegistration($user, $remoteAccount, $remotePassword, $output);
             } else {
-                $output->writeln("用户 {$user['user_name']} 注册失败: " . $registerResult['message']);
+                $output->writeln("用户 {$user['tg_id']} 注册失败: " . $registerResult['message']);
             }
             
         } catch (\Exception $e) {
-            $output->writeln("用户 {$user['user_name']} 注册异常: " . $e->getMessage());
+            $output->writeln("用户 {$user['tg_id']} 注册异常: " . $e->getMessage());
             
             // 记录异常
             $this->logRegistrationResult($user['id'], $remoteAccount, $remotePassword, [
@@ -204,13 +205,8 @@ class RemoteRegister extends Command
     private function generateRemoteAccount($user)
     {
         // 基于用户名生成，如果用户名已存在则加上时间戳
-        $baseAccount = $user['user_name'];
-        
-        // 如果用户名过长，截取前10位
-        if (strlen($baseAccount) > 10) {
-            // $baseAccount = substr($baseAccount, 0, 10);
-        }
-        
+        $baseAccount = $user['tg_id'];
+           
         return $baseAccount;
     }
 
@@ -219,6 +215,7 @@ class RemoteRegister extends Command
      */
     private function doRemoteRegister($account, $password, $referralCode = '')
     {
+        // 修复：在方法中使用env()而不是在类属性中
         $baseUrl = env('WEB_URL', '').'api/core/member/frontend';
         
         try {

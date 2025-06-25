@@ -11,8 +11,8 @@ use think\facade\Log;
  */
 class RemoteLoginService
 {
-    // API基础URL
-    private string $BASE_URL = env('WEB_URL', '').'api/core/member/frontend';
+    // 修复：将env()调用移到构造函数中
+    private string $BASE_URL;
     
     // 请求超时时间
     private const TIMEOUT = 30;
@@ -20,6 +20,12 @@ class RemoteLoginService
     // 重试配置
     private const MAX_RETRIES = 5;
     private const RETRY_DELAY = 10; // 秒
+
+    public function __construct()
+    {
+        // 在构造函数中初始化需要使用env()的属性
+        $this->BASE_URL = env('WEB_URL', '').'api/core/member/frontend';
+    }
 
     /**
      * 执行完整登录流程

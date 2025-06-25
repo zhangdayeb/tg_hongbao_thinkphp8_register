@@ -20,18 +20,20 @@ class LoginController extends BaseController
     private RemoteLoginService $remoteLoginService;
     private InviteCodeService $inviteCodeService;
 
-    // 免登录基础URL配置
-    private string $AUTO_LOGIN_BASE_URL = env('WEB_URL', '');
+    // 修复：将env()调用移到初始化方法中
+    private string $AUTO_LOGIN_BASE_URL;
     private const DEFAULT_SOURCE = 'tg';
 
     protected function initialize()
     {
         parent::initialize();
+        // 在初始化方法中设置需要使用env()的属性
+        $this->AUTO_LOGIN_BASE_URL = env('WEB_URL', '');
         $this->remoteLoginService = new RemoteLoginService();
         $this->inviteCodeService = new InviteCodeService();
     }
 
-/**
+    /**
      * 主入口方法 - 处理用户访问 /login?user_id=1
      * 自动登录并重定向到免登录地址
      * @return Response

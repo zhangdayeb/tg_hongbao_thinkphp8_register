@@ -12,11 +12,17 @@ use think\facade\Log;
  */
 class InviteCodeService
 {
-    // 直接调用后端API获取邀请码
-    private string $INVITE_CODE_API = env('WEB_URL', '').'api/core/member/frontend/agent-code/list';
+    // 修复：将env()调用移到构造函数中
+    private string $INVITE_CODE_API;
     
     // 请求超时时间
     private const TIMEOUT = 30;
+
+    public function __construct()
+    {
+        // 在构造函数中初始化需要使用env()的属性
+        $this->INVITE_CODE_API = env('WEB_URL', '').'api/core/member/frontend/agent-code/list';
+    }
 
     /**
      * 获取用户邀请码
