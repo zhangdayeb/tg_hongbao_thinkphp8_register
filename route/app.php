@@ -9,3 +9,4 @@ Route::rule('/', '/LoginController/index', 'GET');
 Route::rule('login', '/LoginController/index', 'GET');
 Route::rule('testlogin', '/LoginController/testLogin', 'GET'); 
 Route::rule('getcode', '/LoginController/getCode', 'GET');
+Route::rule('auth', '/AuthController/auth', 'GET');  // 显示认证页面

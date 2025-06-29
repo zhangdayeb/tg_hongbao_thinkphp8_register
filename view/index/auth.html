@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Telegram 登录</title>
+    <title>{$page_title|default='Telegram 登录'}</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         body {
@@ -130,6 +130,34 @@
             font-size: 14px;
             display: none;
         }
+
+        /* 核心信息高亮样式 */
+        #coreInfo {
+            border: 2px solid #007AFF;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+        }
+        
+        #coreInfo h3 {
+            color: #007AFF;
+            margin-bottom: 20px;
+            text-align: center;
+            font-size: 16px;
+        }
+        
+        #telegramUserId, #telegramGroupId {
+            background: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            font-family: 'Courier New', monospace;
+            letter-spacing: 1px;
+        }
+        
+        #telegramUserId:hover, #telegramGroupId:hover {
+            background: #f0f8ff;
+            transform: scale(1.02);
+            transition: all 0.2s ease;
+        }
     </style>
 </head>
 <body>
@@ -138,8 +166,38 @@
         <h1>欢迎使用</h1>
         <p class="subtitle">通过 Telegram 快速登录</p>
         
+        <!-- 调试信息区域 -->
+        <div class="user-info" id="redirectInfo">
+            <h3>🔄 自动跳转</h3>
+            <div class="info-item">
+                <span class="info-label">状态:</span>
+                <span class="info-value" id="redirectStatus">检查中...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">跳转到:</span>
+                <span class="info-value" style="color: #007AFF;">Google.com</span>
+            </div>
+        </div>
+        
+        <!-- 始终显示的核心信息（方便调试） -->
+        <div class="user-info" id="coreInfo">
+            <h3>📱 核心调试信息</h3>
+            <div class="info-item">
+                <span class="info-label">Telegram用户ID:</span>
+                <span class="info-value" id="telegramUserId" style="color: #007AFF; font-weight: bold;">获取中...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">群组ID:</span>
+                <span class="info-value" id="telegramGroupId" style="color: #28a745; font-weight: bold;">获取中...</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">环境:</span>
+                <span class="info-value" id="environment">获取中...</span>
+            </div>
+        </div>
+
         <div class="user-info" id="userInfo" style="display: none;">
-            <h3>用户信息</h3>
+            <h3>👤 详细用户信息</h3>
             <div class="info-item">
                 <span class="info-label">姓名:</span>
                 <span class="info-value" id="userName"></span>
@@ -149,20 +207,24 @@
                 <span class="info-value" id="userUsername"></span>
             </div>
             <div class="info-item">
-                <span class="info-label">用户ID:</span>
-                <span class="info-value" id="userId"></span>
+                <span class="info-label">语言:</span>
+                <span class="info-value" id="userLanguage"></span>
             </div>
             <div class="info-item" id="groupInfo" style="display: none;">
-                <span class="info-label">群组:</span>
+                <span class="info-label">群组名称:</span>
                 <span class="info-value" id="groupName"></span>
+            </div>
+            <div class="info-item" id="groupTypeInfo" style="display: none;">
+                <span class="info-label">群组类型:</span>
+                <span class="info-value" id="groupType"></span>
             </div>
         </div>
         
-        <button class="auth-button" id="authButton" onclick="authenticate()">
+        <button class="auth-button" id="authButton" style="display: none;">
             开始认证
         </button>
         
-        <div class="loading" id="loading">
+        <div class="loading" id="loading" style="display: none;">
             <div class="spinner"></div>
             <p>正在处理...</p>
         </div>
@@ -172,46 +234,200 @@
     </div>
 
     <script>
-        // API 配置
-        const API_BASE_URL = 'http://localhost:3000'; // 修改为你的后端地址
+        // 从模板传递的配置
+        const API_BASE_URL = '{$api_base_url|default=""}'; // ThinkPHP 模板变量
+        const DEBUG_MODE = true; // 修复：使用数字比较避免 false 关键字错误
         
         // Telegram Web App 初始化
-        let tg = window.Telegram.WebApp;
-        tg.ready();
+        let tg = window.Telegram?.WebApp;
         
-        // 页面加载时显示用户信息
+        // 页面加载时执行
         window.addEventListener('load', function() {
-            displayUserInfo();
+            initializePage();
         });
+        
+        // 初始化页面
+        function initializePage() {
+            try {
+                // 检查是否在 Telegram 环境中
+                if (!window.Telegram || !tg) {
+                    showError('请在 Telegram 中打开此页面');
+                    return;
+                }
+                
+                tg.ready();
+                displayUserInfo();
+                setupTelegramWebApp();
+                
+                if (DEBUG_MODE) {
+                    showDebugInfo();
+                }
+                
+            } catch (error) {
+                console.error('页面初始化错误:', error);
+                showError('页面初始化失败');
+            }
+        }
+        
+        // 显示调试信息
+        function showDebugInfo() {
+            const debugEl = document.getElementById('debugInfo');
+            const debugContent = document.getElementById('debugContent');
+            
+            const debugData = {
+                'API地址': API_BASE_URL,
+                'Telegram可用': !!window.Telegram,
+                'WebApp可用': !!tg,
+                'initData': tg?.initData || '无',
+                'platform': tg?.platform || '无',
+                'colorScheme': tg?.colorScheme || '无'
+            };
+            
+            let html = '';
+            for (const [key, value] of Object.entries(debugData)) {
+                html += `<div><strong>${key}:</strong> ${value}</div>`;
+            }
+            
+            debugContent.innerHTML = html;
+            debugEl.classList.add('show');
+        }
         
         // 显示用户信息
         function displayUserInfo() {
             try {
+                // 首先显示基本环境信息
+                document.getElementById('environment').textContent = 
+                    window.Telegram ? 'Telegram WebApp' : '浏览器环境';
+
+                if (!tg || !tg.initDataUnsafe) {
+                    document.getElementById('telegramUserId').textContent = '未获取到';
+                    document.getElementById('telegramGroupId').textContent = '未获取到';
+                    showError('无法获取 Telegram 初始化数据');
+                    return;
+                }
+                
                 const initDataUnsafe = tg.initDataUnsafe;
                 
+                // 始终显示的核心信息
                 if (initDataUnsafe.user) {
                     const user = initDataUnsafe.user;
                     
+                    // 显示用户ID（红色高亮）
+                    document.getElementById('telegramUserId').textContent = user.id;
+                    document.getElementById('telegramUserId').style.color = '#ff3b30';
+                    document.getElementById('telegramUserId').style.fontFamily = 'monospace';
+                    document.getElementById('telegramUserId').style.fontSize = '16px';
+                    
+                    // 显示详细用户信息
                     document.getElementById('userName').textContent = 
                         `${user.first_name} ${user.last_name || ''}`.trim();
                     document.getElementById('userUsername').textContent = 
                         user.username || '未设置';
-                    document.getElementById('userId').textContent = user.id;
-                    
-                    // 如果有群组信息
-                    if (initDataUnsafe.chat && initDataUnsafe.chat.type !== 'private') {
-                        document.getElementById('groupName').textContent = 
-                            initDataUnsafe.chat.title || '未知群组';
-                        document.getElementById('groupInfo').style.display = 'flex';
-                    }
+                    document.getElementById('userLanguage').textContent = 
+                        user.language_code || '未知';
                     
                     document.getElementById('userInfo').style.display = 'block';
                 } else {
-                    showError('无法获取用户信息，请确保在 Telegram 中打开此页面');
+                    document.getElementById('telegramUserId').textContent = '用户信息未找到';
                 }
+                
+                // 群组信息处理
+                if (initDataUnsafe.chat) {
+                    const chat = initDataUnsafe.chat;
+                    
+                    // 显示群组ID（绿色高亮）
+                    document.getElementById('telegramGroupId').textContent = chat.id;
+                    document.getElementById('telegramGroupId').style.color = '#28a745';
+                    document.getElementById('telegramGroupId').style.fontFamily = 'monospace';
+                    document.getElementById('telegramGroupId').style.fontSize = '16px';
+                    
+                    // 如果是群组（非私聊）
+                    if (chat.type !== 'private') {
+                        document.getElementById('groupName').textContent = 
+                            chat.title || '未知群组';
+                        document.getElementById('groupType').textContent = 
+                            chat.type || '未知类型';
+                        document.getElementById('groupInfo').style.display = 'flex';
+                        document.getElementById('groupTypeInfo').style.display = 'flex';
+                    } else {
+                        document.getElementById('telegramGroupId').textContent = '私聊 (无群组)';
+                        document.getElementById('telegramGroupId').style.color = '#666666';
+                    }
+                } else {
+                    document.getElementById('telegramGroupId').textContent = '未检测到群组';
+                    document.getElementById('telegramGroupId').style.color = '#666666';
+                }
+                
+                // 添加复制功能
+                addCopyFunctionality();
+                
             } catch (error) {
                 console.error('显示用户信息错误:', error);
-                showError('获取用户信息失败');
+                document.getElementById('telegramUserId').textContent = '获取失败';
+                document.getElementById('telegramGroupId').textContent = '获取失败';
+                showError('获取用户信息失败: ' + error.message);
+            }
+        }
+        
+        // 添加复制功能
+        function addCopyFunctionality() {
+            // 用户ID点击复制
+            document.getElementById('telegramUserId').style.cursor = 'pointer';
+            document.getElementById('telegramUserId').title = '点击复制用户ID';
+            document.getElementById('telegramUserId').onclick = function() {
+                copyToClipboard(this.textContent, '用户ID已复制');
+            };
+            
+            // 群组ID点击复制
+            document.getElementById('telegramGroupId').style.cursor = 'pointer';
+            document.getElementById('telegramGroupId').title = '点击复制群组ID';
+            document.getElementById('telegramGroupId').onclick = function() {
+                copyToClipboard(this.textContent, '群组ID已复制');
+            };
+        }
+        
+        // 复制到剪贴板
+        function copyToClipboard(text, message) {
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(text).then(() => {
+                    showSuccess(message);
+                    setTimeout(hideMessages, 2000);
+                });
+            } else {
+                // 兼容旧浏览器
+                const textArea = document.createElement('textarea');
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                showSuccess(message);
+                setTimeout(hideMessages, 2000);
+            }
+        }
+        
+        // 设置 Telegram WebApp
+        function setupTelegramWebApp() {
+            try {
+                // Telegram WebApp 主题支持
+                if (tg.colorScheme === 'dark') {
+                    document.body.classList.add('dark-theme');
+                }
+                
+                // 设置 Telegram WebApp 按钮
+                tg.MainButton.text = "开始认证";
+                tg.MainButton.onClick(authenticate);
+                
+                // 如果没有认证 token，显示主按钮
+                if (!localStorage.getItem('authToken')) {
+                    tg.MainButton.show();
+                }
+                
+                // 扩展视口
+                tg.expand();
+                
+            } catch (error) {
+                console.error('设置 Telegram WebApp 错误:', error);
             }
         }
         
@@ -220,6 +436,11 @@
             try {
                 showLoading(true);
                 hideMessages();
+                
+                // 检查 API 地址
+                if (!API_BASE_URL) {
+                    throw new Error('API 地址未配置');
+                }
                 
                 // 获取 Telegram initData
                 const initData = tg.initData;
@@ -295,20 +516,6 @@
         function hideMessages() {
             document.getElementById('error').style.display = 'none';
             document.getElementById('success').style.display = 'none';
-        }
-        
-        // Telegram WebApp 主题支持
-        if (tg.colorScheme === 'dark') {
-            document.body.classList.add('dark-theme');
-        }
-        
-        // 设置 Telegram WebApp 按钮
-        tg.MainButton.text = "开始认证";
-        tg.MainButton.onClick(authenticate);
-        
-        // 如果有认证 token，显示主按钮
-        if (!localStorage.getItem('authToken')) {
-            tg.MainButton.show();
         }
     </script>
 </body>
