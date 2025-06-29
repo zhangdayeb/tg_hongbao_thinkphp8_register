@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Telegram 登录</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: var(--tg-theme-bg-color, #ffffff);
+            color: var(--tg-theme-text-color, #000000);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .auth-container {
+            max-width: 400px;
+            width: 100%;
+            padding: 30px;
+            border-radius: 12px;
+            background: var(--tg-theme-secondary-bg-color, #f8f9fa);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        
+        .logo {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            margin-bottom: 10px;
+            color: var(--tg-theme-text-color, #000000);
+        }
+        
+        .subtitle {
+            color: var(--tg-theme-hint-color, #666666);
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .user-info {
+            background: var(--tg-theme-bg-color, #ffffff);
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: left;
+        }
+        
+        .user-info h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: var(--tg-theme-text-color, #000000);
+        }
+        
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        .info-label {
+            color: var(--tg-theme-hint-color, #666666);
+        }
+        
+        .info-value {
+            color: var(--tg-theme-text-color, #000000);
+            font-weight: 500;
+        }
+        
+        .auth-button {
+            width: 100%;
+            padding: 14px;
+            background: var(--tg-theme-button-color, #007AFF);
+            color: var(--tg-theme-button-text-color, #ffffff);
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        
+        .auth-button:hover {
+            opacity: 0.8;
+        }
+        
+        .auth-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .loading {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--tg-theme-hint-color, #cccccc);
+            border-top: 2px solid var(--tg-theme-button-color, #007AFF);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .error {
+            color: #ff3b30;
+            margin-top: 15px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .success {
+            color: #28a745;
+            margin-top: 15px;
+            font-size: 14px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="auth-container">
+        <div class="logo">🚀</div>
+        <h1>欢迎使用</h1>
+        <p class="subtitle">通过 Telegram 快速登录</p>
+        
+        <div class="user-info" id="userInfo" style="display: none;">
+            <h3>用户信息</h3>
+            <div class="info-item">
+                <span class="info-label">姓名:</span>
+                <span class="info-value" id="userName"></span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">用户名:</span>
+                <span class="info-value" id="userUsername"></span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">用户ID:</span>
+                <span class="info-value" id="userId"></span>
+            </div>
+            <div class="info-item" id="groupInfo" style="display: none;">
+                <span class="info-label">群组:</span>
+                <span class="info-value" id="groupName"></span>
+            </div>
+        </div>
+        
+        <button class="auth-button" id="authButton" onclick="authenticate()">
+            开始认证
+        </button>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>正在处理...</p>
+        </div>
+        
+        <div class="error" id="error"></div>
+        <div class="success" id="success"></div>
+    </div>
+
+    <script>
+        // API 配置
+        const API_BASE_URL = 'http://localhost:3000'; // 修改为你的后端地址
+        
+        // Telegram Web App 初始化
+        let tg = window.Telegram.WebApp;
+        tg.ready();
+        
+        // 页面加载时显示用户信息
+        window.addEventListener('load', function() {
+            displayUserInfo();
+        });
+        
+        // 显示用户信息
+        function displayUserInfo() {
+            try {
+                const initDataUnsafe = tg.initDataUnsafe;
+                
+                if (initDataUnsafe.user) {
+                    const user = initDataUnsafe.user;
+                    
+                    document.getElementById('userName').textContent = 
+                        `${user.first_name} ${user.last_name || ''}`.trim();
+                    document.getElementById('userUsername').textContent = 
+                        user.username || '未设置';
+                    document.getElementById('userId').textContent = user.id;
+                    
+                    // 如果有群组信息
+                    if (initDataUnsafe.chat && initDataUnsafe.chat.type !== 'private') {
+                        document.getElementById('groupName').textContent = 
+                            initDataUnsafe.chat.title || '未知群组';
+                        document.getElementById('groupInfo').style.display = 'flex';
+                    }
+                    
+                    document.getElementById('userInfo').style.display = 'block';
+                } else {
+                    showError('无法获取用户信息，请确保在 Telegram 中打开此页面');
+                }
+            } catch (error) {
+                console.error('显示用户信息错误:', error);
+                showError('获取用户信息失败');
+            }
+        }
+        
+        // 认证函数
+        async function authenticate() {
+            try {
+                showLoading(true);
+                hideMessages();
+                
+                // 获取 Telegram initData
+                const initData = tg.initData;
+                
+                if (!initData) {
+                    throw new Error('无法获取 Telegram 初始化数据');
+                }
+                
+                // 发送认证请求
+                const response = await fetch(`${API_BASE_URL}/api/telegram/auth`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        initData: initData,
+                        redirectUrl: '/dashboard' // 可以动态设置
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    // 保存认证信息
+                    localStorage.setItem('authToken', result.data.token);
+                    localStorage.setItem('userInfo', JSON.stringify(result.data.user));
+                    
+                    showSuccess(result.message);
+                    
+                    // 延迟跳转
+                    setTimeout(() => {
+                        // 如果是新用户，可以跳转到欢迎页面
+                        if (result.data.user.isNewUser) {
+                            window.location.href = '/welcome';
+                        } else {
+                            window.location.href = result.data.redirectUrl;
+                        }
+                    }, 1500);
+                    
+                } else {
+                    throw new Error(result.message || '认证失败');
+                }
+                
+            } catch (error) {
+                console.error('认证错误:', error);
+                showError(error.message || '认证过程中发生错误');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // 显示/隐藏加载状态
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('authButton').disabled = show;
+        }
+        
+        // 显示错误信息
+        function showError(message) {
+            const errorEl = document.getElementById('error');
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+        }
+        
+        // 显示成功信息
+        function showSuccess(message) {
+            const successEl = document.getElementById('success');
+            successEl.textContent = message;
+            successEl.style.display = 'block';
+        }
+        
+        // 隐藏所有消息
+        function hideMessages() {
+            document.getElementById('error').style.display = 'none';
+            document.getElementById('success').style.display = 'none';
+        }
+        
+        // Telegram WebApp 主题支持
+        if (tg.colorScheme === 'dark') {
+            document.body.classList.add('dark-theme');
+        }
+        
+        // 设置 Telegram WebApp 按钮
+        tg.MainButton.text = "开始认证";
+        tg.MainButton.onClick(authenticate);
+        
+        // 如果有认证 token，显示主按钮
+        if (!localStorage.getItem('authToken')) {
+            tg.MainButton.show();
+        }
+    </script>
+</body>
+</html>
