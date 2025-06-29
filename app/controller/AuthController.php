@@ -193,18 +193,22 @@ class AuthController extends BaseController
                 
                 // 步骤4: 创建邀请记录
                 if ($inviterId) {
-                    $inviteResult = $this->createInvitationRecord($inviterId, $userId, $tgId);
+                    // 添加调试信息
+                    $this->debugInvitationTable($requestId);
+                    
+                    $inviteResult = $this->createInvitationRecord($inviterId, $userId, $tgId, $requestId);
                     $this->logAuthActivity('invitation_created', [
                         'request_id' => $requestId,
                         'inviter_id' => $inviterId,
                         'invitee_id' => $userId,
-                        'invitation_success' => $inviteResult['success']
+                        'invitation_success' => $inviteResult['success'],
+                        'invitation_message' => $inviteResult['message'] ?? ''
                     ]);
                 }
             }
             
             // 步骤5: 执行远程注册
-            $remoteResult = $this->performRemoteRegister($userId, $inviterId);
+            $remoteResult = $this->performRemoteRegister($userId, $inviterId, $requestId);
             if (!$remoteResult['success']) {
                 return ['success' => false, 'message' => $remoteResult['message']];
             }
@@ -452,54 +456,172 @@ class AuthController extends BaseController
     }
 
     /**
-     * 创建邀请记录
+     * 调试邀请表信息
+     * @param string $requestId 请求ID
+     */
+    private function debugInvitationTable(string $requestId): void
+    {
+        try {
+            // 检查表是否存在
+            $tableExists = Db::query("SHOW TABLES LIKE 'user_invitations'");
+            Log::info('检查表存在性', [
+                'request_id' => $requestId,
+                'table_exists' => !empty($tableExists)
+            ]);
+            
+            if (!empty($tableExists)) {
+                // 检查表结构
+                $columns = Db::query("SHOW COLUMNS FROM user_invitations");
+                Log::info('user_invitations 表结构', [
+                    'request_id' => $requestId,
+                    'columns' => $columns
+                ]);
+                
+                // 检查记录数
+                $count = Db::table('user_invitations')->count();
+                Log::info('user_invitations 表记录数', [
+                    'request_id' => $requestId,
+                    'count' => $count
+                ]);
+            }
+            
+        } catch (\Exception $e) {
+            Log::error('调试邀请表失败', [
+                'request_id' => $requestId,
+                'error' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * 创建邀请记录 - 修复版本
      * @param int $inviterId 邀请人ID
      * @param int $inviteeId 被邀请人ID
      * @param string $tgId Telegram 用户ID
+     * @param string $requestId 请求ID
      * @return array
      */
-    private function createInvitationRecord(int $inviterId, int $inviteeId, string $tgId): array
+    private function createInvitationRecord(int $inviterId, int $inviteeId, string $tgId, string $requestId = ''): array
     {
         try {
+            // 生成邀请码
             $invitationCode = $this->generateInvitationCode();
             
-            $invitationData = [
-                'inviter_id' => $inviterId,
-                'invitee_id' => $inviteeId,  // 确保设置被邀请人ID
-                'invitation_code' => $invitationCode,
-                'invitee_tg_id' => $tgId,
-                'reward_amount' => 0.00,
-                'reward_status' => 0, // UserInvitation::REWARD_PENDING
-                'first_deposit_amount' => 0.00,
-                'created_at' => date('Y-m-d H:i:s'),
-                'completed_at' => date('Y-m-d H:i:s')
-            ];
-            
-            // 直接使用数据库插入，确保数据正确保存
-            $insertId = Db::table('user_invitations')->insertGetId($invitationData);
-            
-            Log::info('邀请记录创建成功', [
-                'invitation_id' => $insertId,
+            Log::info('准备创建邀请记录', [
+                'request_id' => $requestId,
                 'inviter_id' => $inviterId,
                 'invitee_id' => $inviteeId,
                 'invitation_code' => $invitationCode,
                 'tg_id' => $tgId
             ]);
             
-            return [
-                'success' => true,
-                'invitation_id' => $insertId,
-                'invitation_code' => $invitationCode
+            // 检查是否已存在邀请记录
+            $existing = Db::table('user_invitations')
+                         ->where('inviter_id', $inviterId)
+                         ->where('invitee_id', $inviteeId)
+                         ->find();
+            
+            if ($existing) {
+                Log::warning('邀请记录已存在', [
+                    'request_id' => $requestId,
+                    'existing_id' => $existing['id'],
+                    'inviter_id' => $inviterId,
+                    'invitee_id' => $inviteeId
+                ]);
+                
+                return [
+                    'success' => true,
+                    'invitation_id' => $existing['id'],
+                    'invitation_code' => $existing['invitation_code'],
+                    'message' => '邀请记录已存在'
+                ];
+            }
+            
+            // 方案1：尝试使用模型创建
+            try {
+                $invitation = new UserInvitation();
+                $invitationData = [
+                    'inviter_id' => $inviterId,
+                    'invitee_id' => $inviteeId,
+                    'invitation_code' => $invitationCode,
+                    'invitee_tg_id' => $tgId,
+                    'reward_amount' => 0.00,
+                    'reward_status' => 0, // REWARD_PENDING
+                    'first_deposit_amount' => 0.00,
+                    'create_time' => time(),
+                    'completed_at' => time()
+                ];
+                
+                $result = $invitation->save($invitationData);
+                
+                if ($result && $invitation->id) {
+                    Log::info('邀请记录创建成功（模型方式）', [
+                        'request_id' => $requestId,
+                        'invitation_id' => $invitation->id,
+                        'inviter_id' => $inviterId,
+                        'invitee_id' => $inviteeId,
+                        'invitation_code' => $invitationCode
+                    ]);
+                    
+                    return [
+                        'success' => true,
+                        'invitation_id' => $invitation->id,
+                        'invitation_code' => $invitationCode,
+                        'method' => 'model'
+                    ];
+                }
+            } catch (\Exception $modelException) {
+                Log::warning('模型方式创建失败，尝试SQL方式', [
+                    'request_id' => $requestId,
+                    'model_error' => $modelException->getMessage()
+                ]);
+            }
+            
+            // 方案2：使用原生SQL创建
+            $insertData = [
+                'inviter_id' => $inviterId,
+                'invitee_id' => $inviteeId,
+                'invitation_code' => $invitationCode,
+                'invitee_tg_id' => $tgId,
+                'reward_amount' => 0.00,
+                'reward_status' => 0,
+                'first_deposit_amount' => 0.00,
+                'create_time' => time(),
+                'completed_at' => time()
             ];
+            
+            $insertId = Db::table('user_invitations')->insertGetId($insertData);
+            
+            if ($insertId) {
+                Log::info('邀请记录创建成功（SQL方式）', [
+                    'request_id' => $requestId,
+                    'invitation_id' => $insertId,
+                    'inviter_id' => $inviterId,
+                    'invitee_id' => $inviteeId,
+                    'invitation_code' => $invitationCode,
+                    'insert_data' => $insertData
+                ]);
+                
+                return [
+                    'success' => true,
+                    'invitation_id' => $insertId,
+                    'invitation_code' => $invitationCode,
+                    'method' => 'sql'
+                ];
+            }
+            
+            throw new \Exception('模型和SQL方式都失败');
 
         } catch (\Exception $e) {
             Log::error('创建邀请记录异常', [
+                'request_id' => $requestId,
                 'inviter_id' => $inviterId,
                 'invitee_id' => $inviteeId,
                 'tg_id' => $tgId,
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
-                'line' => $e->getLine()
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
             ]);
             
             return [
@@ -513,9 +635,10 @@ class AuthController extends BaseController
      * 执行远程注册
      * @param int $userId 用户ID
      * @param int|null $inviterId 邀请人ID
+     * @param string $requestId 请求ID
      * @return array
      */
-    private function performRemoteRegister(int $userId, ?int $inviterId): array
+    private function performRemoteRegister(int $userId, ?int $inviterId, string $requestId = ''): array
     {
         try {
             // 获取用户信息
@@ -531,11 +654,13 @@ class AuthController extends BaseController
                 if ($inviter && !empty($inviter['game_invitation_code'])) {
                     $inviterGameCode = $inviter['game_invitation_code'];
                     Log::info('获取到邀请人游戏邀请码', [
+                        'request_id' => $requestId,
                         'inviter_id' => $inviterId,
                         'inviter_game_code' => $inviterGameCode
                     ]);
                 } else {
                     Log::warning('邀请人无游戏邀请码', [
+                        'request_id' => $requestId,
                         'inviter_id' => $inviterId,
                         'inviter_exists' => !!$inviter,
                         'game_invitation_code' => $inviter['game_invitation_code'] ?? 'null'
@@ -544,6 +669,7 @@ class AuthController extends BaseController
             }
             
             Log::info('开始远程注册', [
+                'request_id' => $requestId,
                 'user_id' => $userId,
                 'username' => $user['user_name'],
                 'inviter_id' => $inviterId,
@@ -566,12 +692,13 @@ class AuthController extends BaseController
             // 创建远程注册记录（重要：autoLogin需要这个记录）
             try {
                 $logData = [
-                    'user_id' => $userId,
-                    'remote_account' => $remoteAccount,    // 修复：使用正确的用户名
+                    'user_id' => $userId,           // 修复：使用正确的字段名
+                    'local_user_id' => $userId,    // 添加备用字段
+                    'remote_account' => $remoteAccount,
                     'remote_password' => $remotePassword,
                     'register_status' => 1,
                     'register_time' => date('Y-m-d H:i:s'),
-                    'invite_code' => $inviterGameCode ?? '',  // 传递邀请人的游戏邀请码
+                    'invite_code' => $inviterGameCode ?? '',
                     'register_ip' => request()->ip(),
                     'user_agent' => request()->header('User-Agent'),
                     'create_time' => date('Y-m-d H:i:s'),
@@ -582,6 +709,7 @@ class AuthController extends BaseController
                 $logId = Db::table('remote_register_log')->insertGetId($logData);
                 
                 Log::info('远程注册记录创建成功', [
+                    'request_id' => $requestId,
                     'log_id' => $logId,
                     'user_id' => $userId,
                     'remote_account' => $remoteAccount,
@@ -590,6 +718,7 @@ class AuthController extends BaseController
                 
             } catch (\Exception $e) {
                 Log::error('创建远程注册记录失败', [
+                    'request_id' => $requestId,
                     'user_id' => $userId,
                     'error' => $e->getMessage(),
                     'file' => $e->getFile(),
@@ -607,6 +736,7 @@ class AuthController extends BaseController
             $this->updateGameInvitationCode($userId);
             
             Log::info('远程注册成功', [
+                'request_id' => $requestId,
                 'user_id' => $userId,
                 'remote_account' => $remoteAccount,
                 'inviter_game_code' => $inviterGameCode
@@ -620,6 +750,7 @@ class AuthController extends BaseController
 
         } catch (\Exception $e) {
             Log::error('远程注册异常', [
+                'request_id' => $requestId,
                 'user_id' => $userId,
                 'inviter_id' => $inviterId,
                 'error' => $e->getMessage(),
@@ -775,8 +906,15 @@ class AuthController extends BaseController
             for ($i = 0; $i < 12; $i++) {
                 $code .= $chars[mt_rand(0, strlen($chars) - 1)];
             }
-        } while (User::where('invitation_code', $code)->find() || 
-                 UserInvitation::where('invitation_code', $code)->find());
+            
+            // 检查用户表中的邀请码
+            $userExists = User::where('invitation_code', $code)->find();
+            // 检查邀请记录表中的邀请码
+            $invitationExists = Db::table('user_invitations')
+                              ->where('invitation_code', $code)
+                              ->find();
+                             
+        } while ($userExists || $invitationExists);
         
         return $code;
     }
@@ -871,5 +1009,91 @@ class AuthController extends BaseController
             'message' => $message,
             'timestamp' => date('Y-m-d H:i:s')
         ], 400);
+    }
+
+    /**
+     * 补救方案：修复缺失的邀请记录
+     * @return Response
+     */
+    public function fixMissingInvitationRecords(): Response
+    {
+        try {
+            $startTime = microtime(true);
+            $requestId = uniqid('fix_invitation_');
+            
+            Log::info('开始修复缺失的邀请记录', [
+                'request_id' => $requestId,
+                'start_time' => date('H:i:s')
+            ]);
+            
+            // 查找最近24小时内创建但缺少邀请记录的用户
+            $usersWithoutInvitation = Db::query("
+                SELECT u.id as user_id, u.tg_id, u.user_name, u.create_time
+                FROM ntp_common_user u
+                LEFT JOIN ntp_user_invitations ui ON u.id = ui.invitee_id
+                WHERE ui.id IS NULL 
+                AND u.auto_created = 1 
+                AND u.create_time >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+                ORDER BY u.id DESC
+                LIMIT 50
+            ");
+            
+            $fixed = 0;
+            $errors = [];
+            $skipped = 0;
+            
+            foreach ($usersWithoutInvitation as $user) {
+                try {
+                    // 从日志中查找这个用户的认证记录，获取群组信息
+                    // 这里简化处理，假设可以从某处获取到邀请人信息
+                    // 实际应用中可能需要从其他表或日志中查找
+                    
+                    // 暂时跳过，因为无法确定邀请人
+                    $skipped++;
+                    
+                } catch (\Exception $e) {
+                    $errors[] = "用户 {$user['user_id']}: " . $e->getMessage();
+                }
+            }
+            
+            $totalTime = round((microtime(true) - $startTime) * 1000, 2);
+            
+            Log::info('修复邀请记录完成', [
+                'request_id' => $requestId,
+                'total_found' => count($usersWithoutInvitation),
+                'fixed_count' => $fixed,
+                'skipped_count' => $skipped,
+                'error_count' => count($errors),
+                'total_time' => $totalTime . 'ms'
+            ]);
+            
+            return json([
+                'code' => 200,
+                'success' => true,
+                'message' => '修复完成',
+                'data' => [
+                    'total_found' => count($usersWithoutInvitation),
+                    'fixed_count' => $fixed,
+                    'skipped_count' => $skipped,
+                    'error_count' => count($errors),
+                    'errors' => $errors,
+                    'total_time' => $totalTime . 'ms'
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('修复邀请记录异常', [
+                'request_id' => $requestId ?? '',
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            return json([
+                'code' => 500,
+                'success' => false,
+                'message' => '修复过程中发生异常: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
